@@ -9,6 +9,10 @@ import {
 
 const DIAS = ['', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
 const UNIDADES = ['g', 'ml', 'taza', 'cucharada', 'cucharadita', 'pieza', 'porción', 'vaso', 'rebanada', 'piezas', 'gramos']
+// Reparto estándar del objetivo calórico diario entre tiempos de comida
+const PCT_TIEMPO: Record<string, number> = {
+  'Desayuno': 0.25, 'Colacion AM': 0.10, 'Comida': 0.30, 'Colacion PM': 0.10, 'Cena': 0.25,
+}
 
 type EditState = {
   id: string
@@ -36,6 +40,8 @@ export default function EditorPlan() {
   // Add modal state (flat, avoids nested object updates)
   const [addOpen, setAddOpen] = useState(false)
   const [addTiempoId, setAddTiempoId] = useState('')
+  const [addTiempoNombre, setAddTiempoNombre] = useState('')
+  const [addTiempoUsado, setAddTiempoUsado] = useState(0)
   const [addTab, setAddTab] = useState<'alimentos' | 'platillos' | 'libre'>('alimentos')
   const [addQuery, setAddQuery] = useState('')
   const [addResultados, setAddResultados] = useState<any[]>([])
@@ -253,8 +259,10 @@ export default function EditorPlan() {
   }
 
   // Add modal
-  function openAdd(tiempoId: string) {
-    setAddTiempoId(tiempoId)
+  function openAdd(tiempo: any) {
+    setAddTiempoId(tiempo.id)
+    setAddTiempoNombre(tiempo.nombre)
+    setAddTiempoUsado(Math.round((tiempo.alimentos ?? []).reduce((s: number, a: any) => s + kcalItem(a), 0)))
     setAddTab('alimentos')
     setAddQuery('')
     setAddResultados([])
@@ -297,6 +305,18 @@ export default function EditorPlan() {
     setAddSeleccionado(item)
     setAddCantidad(addTab === 'alimentos' ? '100' : '1')
     setAddUnidad(addTab === 'alimentos' ? 'g' : 'porción')
+  }
+
+  // Espacio restante de kcal en el tiempo de comida que se está editando,
+  // repartiendo plan.caloriasObj entre tiempos con PCT_TIEMPO
+  const presupuestoTiempo = plan?.caloriasObj
+    ? Math.round(plan.caloriasObj * (PCT_TIEMPO[addTiempoNombre] ?? 0.2))
+    : null
+  const espacioRestante = presupuestoTiempo != null ? presupuestoTiempo - addTiempoUsado : null
+
+  function previewKcalItem(item: any): number {
+    const cant = addTab === 'alimentos' ? 100 : 1
+    return Math.round((item.calorias ?? 0) * cant / 100)
   }
 
   const addKcalPreview = addSeleccionado
@@ -413,6 +433,15 @@ export default function EditorPlan() {
               ))}
             </div>
 
+            {espacioRestante != null && (
+              <div className={`px-5 py-2 text-xs font-medium border-b border-gray-100 ${
+                espacioRestante < 0 ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-500'
+              }`}>
+                {espacioRestante >= 0
+                  ? `Espacio restante en ${addTiempoNombre}: ${espacioRestante} kcal`
+                  : `Ya pasaste el presupuesto de ${addTiempoNombre} por ${Math.abs(espacioRestante)} kcal`}
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {addTab !== 'libre' ? (
                 !addSeleccionado ? (
@@ -424,16 +453,29 @@ export default function EditorPlan() {
                         value={addQuery} onChange={e => handleAddQuery(e.target.value)} />
                     </div>
                     <div className="space-y-0.5">
-                      {addResultados.map((item: any) => (
-                        <button key={item.id} onClick={() => selectItem(item)}
-                          className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-rose-50 transition-colors">
-                          <p className="text-sm font-medium text-gray-800">{item.nombre}</p>
-                          <p className="text-xs text-gray-400">
-                            {item.calorias ?? '?'} kcal/100g
-                            {item.categoria && ` · ${item.categoria}`}
-                          </p>
-                        </button>
-                      ))}
+                      {addResultados.map((item: any) => {
+                        const previewKcal = previewKcalItem(item)
+                        const cabe = espacioRestante == null ? null : previewKcal <= espacioRestante
+                        return (
+                          <button key={item.id} onClick={() => selectItem(item)}
+                            className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-rose-50 transition-colors flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-gray-800 truncate">{item.nombre}</p>
+                              <p className="text-xs text-gray-400">
+                                {item.calorias ?? '?'} kcal/100g
+                                {item.categoria && ` · ${item.categoria}`}
+                              </p>
+                            </div>
+                            {cabe != null && (
+                              <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                cabe ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                              }`}>
+                                {cabe ? 'Cabe' : `+${previewKcal - espacioRestante!} kcal`}
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
                       {!addQuery && (
                         <p className="text-sm text-center text-gray-400 py-8">Escribe para buscar...</p>
                       )}
@@ -578,7 +620,7 @@ export default function EditorPlan() {
                               <span className="text-xs text-gray-400 tabular-nums">{calT} kcal</span>
                             )}
                           </div>
-                          <button onClick={() => openAdd(t.id)}
+                          <button onClick={() => openAdd(t)}
                             className="no-print text-xs text-rose-500 hover:text-rose-600 font-medium flex items-center gap-1 transition-colors">
                             <Plus className="w-3.5 h-3.5" /> Agregar
                           </button>
