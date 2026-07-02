@@ -1,0 +1,23 @@
+# Binarios compilados
+nutricionist-linux*
+nutricionist-win32*
+nutricionist-*.exe
+nutricionist-windows-*
+nutricionist-darwin-*
+
+# Secrets / datos locales
+config/secret.key
+*.db
+*.db-shm
+*.db-wal
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Debug builds propios
+*-debug
+
+# OS / editor
+.DS_Store
+*.swp
