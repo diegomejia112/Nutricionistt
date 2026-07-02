@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Search, X, Plus, ChevronDown, ChevronUp, Check, Pencil, Trash2, Printer } from 'lucide-react'
+import { ArrowLeft, Search, X, Plus, ChevronDown, ChevronUp, Check, Pencil, Trash2, Printer, FileSpreadsheet, FileText } from 'lucide-react'
 import { api } from '../lib/api'
 import {
   calcEquivAlimentos, calcEquivTiempos, totalKcalEquiv,
@@ -31,6 +31,7 @@ export default function EditorPlan() {
   const [editando, setEditando] = useState<EditState | null>(null)
   const [saving, setSaving] = useState(false)
   const [printAll, setPrintAll] = useState(false)
+  const [exportando, setExportando] = useState(false)
 
   // Add modal state (flat, avoids nested object updates)
   const [addOpen, setAddOpen] = useState(false)
@@ -57,6 +58,129 @@ export default function EditorPlan() {
       window.print()
       setPrintAll(false)
     }, 150)
+  }
+
+  function slugPlan(): string {
+    return (plan?.nombre ?? 'plan')
+      .toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9\-]/g, '')
+  }
+
+  function descargarBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  // Tiempos de comida únicos del plan, ordenados por el orden mínimo encontrado
+  function tiemposUnicosDelPlan(): { nombre: string; orden: number }[] {
+    const seen = new Map<string, number>()
+    ;(plan?.dias ?? []).forEach((dia: any) => {
+      ;(dia.tiempos ?? []).forEach((t: any) => {
+        const existente = seen.get(t.nombre)
+        if (existente === undefined || t.orden < existente) seen.set(t.nombre, t.orden)
+      })
+    })
+    return [...seen.entries()].map(([nombre, orden]) => ({ nombre, orden })).sort((a, b) => a.orden - b.orden)
+  }
+
+  async function exportarExcel() {
+    if (!plan) return
+    setExportando(true)
+    try {
+      const ExcelJS = (await import('exceljs')).default
+      const workbook = new ExcelJS.Workbook()
+      const sheet = workbook.addWorksheet('Plan semanal')
+
+      sheet.mergeCells('A1:H1')
+      const titleCell = sheet.getCell('A1')
+      titleCell.value = `${plan.nombre}${plan.caloriasObj ? ' — Objetivo: ' + plan.caloriasObj + ' kcal/día' : ''}`
+      titleCell.font = { bold: true, size: 14 }
+      titleCell.alignment = { horizontal: 'center' }
+
+      const headerRow = sheet.getRow(2)
+      headerRow.getCell(1).value = ''
+      for (let col = 2; col <= 8; col++) {
+        const cell = headerRow.getCell(col)
+        cell.value = DIAS[col - 1]
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF43F5E' } }
+        cell.alignment = { horizontal: 'center', vertical: 'middle' }
+      }
+
+      const tiemposUnicos = tiemposUnicosDelPlan()
+      let rowIndex = 3
+      tiemposUnicos.forEach(tiempo => {
+        const row = sheet.getRow(rowIndex)
+        row.getCell(1).value = tiempo.nombre
+        row.getCell(1).font = { bold: true }
+        for (let diaSemana = 1; diaSemana <= 7; diaSemana++) {
+          const dia = plan.dias.find((d: any) => d.diaSemana === diaSemana)
+          const tiempoDia = dia?.tiempos.find((t: any) => t.nombre === tiempo.nombre)
+          const alimentos = tiempoDia?.alimentos ?? []
+          if (alimentos.length === 0) { row.getCell(diaSemana + 1).value = ''; continue }
+          row.getCell(diaSemana + 1).value = alimentos
+            .map((a: any) => `${a.nombre} — ${a.cantidad}${a.unidad} (${kcalItem(a)} kcal)`)
+            .join('\n')
+          row.getCell(diaSemana + 1).alignment = { wrapText: true, vertical: 'top' }
+        }
+        rowIndex++
+      })
+
+      const totalRow = sheet.getRow(rowIndex)
+      totalRow.getCell(1).value = 'Total kcal'
+      totalRow.getCell(1).font = { bold: true }
+      for (let diaSemana = 1; diaSemana <= 7; diaSemana++) {
+        const dia = plan.dias.find((d: any) => d.diaSemana === diaSemana)
+        totalRow.getCell(diaSemana + 1).value = dia ? totalCalDia(dia) : 0
+        totalRow.getCell(diaSemana + 1).font = { bold: true }
+      }
+
+      sheet.getColumn(1).width = 14
+      for (let col = 2; col <= 8; col++) sheet.getColumn(col).width = 26
+
+      const buffer = await workbook.xlsx.writeBuffer()
+      descargarBlob(
+        new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+        `plan-${slugPlan()}.xlsx`
+      )
+    } finally {
+      setExportando(false)
+    }
+  }
+
+  function exportarTexto() {
+    if (!plan) return
+    const tiemposUnicos = tiemposUnicosDelPlan()
+    const lineas: string[] = []
+    lineas.push(plan.nombre)
+    if (plan.caloriasObj) lineas.push(`Objetivo: ${plan.caloriasObj} kcal/día`)
+    lineas.push('')
+
+    for (let diaSemana = 1; diaSemana <= 7; diaSemana++) {
+      const dia = plan.dias.find((d: any) => d.diaSemana === diaSemana)
+      lineas.push(`== ${DIAS[diaSemana]} ==`)
+      if (!dia) { lineas.push('(sin datos)', ''); continue }
+      tiemposUnicos.forEach(tiempo => {
+        const tiempoDia = dia.tiempos.find((t: any) => t.nombre === tiempo.nombre)
+        const alimentos = tiempoDia?.alimentos ?? []
+        if (alimentos.length === 0) return
+        lineas.push(`${tiempo.nombre}:`)
+        alimentos.forEach((a: any) => {
+          lineas.push(`  - ${a.nombre} — ${a.cantidad}${a.unidad} (${kcalItem(a)} kcal)`)
+        })
+      })
+      lineas.push(`Total: ${totalCalDia(dia)} kcal`, '')
+    }
+
+    descargarBlob(new Blob([lineas.join('\n')], { type: 'text/plain;charset=utf-8' }), `plan-${slugPlan()}.txt`)
   }
 
   const reload = useCallback(() => {
@@ -247,6 +371,16 @@ export default function EditorPlan() {
           className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-colors">
           <Printer className="w-4 h-4" />
           Exportar
+        </button>
+        <button onClick={exportarExcel} disabled={exportando}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          <FileSpreadsheet className="w-4 h-4" />
+          {exportando ? 'Exportando...' : 'Excel'}
+        </button>
+        <button onClick={exportarTexto}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-colors">
+          <FileText className="w-4 h-4" />
+          Nota (.txt)
         </button>
       </div>
       {/* Print header — visible only when printing */}
