@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	githubRepo = "diegomejia11/nutricionist"
+	githubRepo = "diegomejia112/Nutricionistt"
 	checkEvery = 6 * time.Hour
 )
 
