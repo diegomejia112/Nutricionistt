@@ -524,6 +524,10 @@ function SeguimientoTab({ pacienteId, alturaInicial }: { pacienteId: string; alt
   const [glucosa, setGlucosa]     = useState('')
   const [notas, setNotas]         = useState('')
   const [showExtra, setShowExtra] = useState(false)
+  const [pliegueTricep, setPliegueTricep]             = useState('')
+  const [pliegueBiceps, setPliegueBiceps]             = useState('')
+  const [pliegueSubescapular, setPliegueSubescapular] = useState('')
+  const [pliegueSuprailiaco, setPliegueSuprailiaco]   = useState('')
 
   const reload = () => {
     api.listSeguimientos(pacienteId)
@@ -534,7 +538,8 @@ function SeguimientoTab({ pacienteId, alturaInicial }: { pacienteId: string; alt
   useEffect(() => { reload() }, [pacienteId])
 
   async function guardar() {
-    if (!peso && !cintura && !cadera && !brazo && !muslo && !grasa && !sistolica && !glucosa && !notas) return
+    if (!peso && !cintura && !cadera && !brazo && !muslo && !grasa && !sistolica && !glucosa && !notas
+      && !pliegueTricep && !pliegueBiceps && !pliegueSubescapular && !pliegueSuprailiaco) return
     setSaving(true)
     const body: any = { fecha }
     if (peso)      body.peso           = parseFloat(peso)
@@ -547,10 +552,15 @@ function SeguimientoTab({ pacienteId, alturaInicial }: { pacienteId: string; alt
     if (diastolica) body.tensionDiastolica = parseInt(diastolica)
     if (glucosa)   body.glucosa        = parseFloat(glucosa)
     if (notas)     body.notas          = notas
+    if (pliegueTricep)       body.pliegueTricep       = parseFloat(pliegueTricep)
+    if (pliegueBiceps)       body.pliegueBiceps       = parseFloat(pliegueBiceps)
+    if (pliegueSubescapular) body.pliegueSubescapular = parseFloat(pliegueSubescapular)
+    if (pliegueSuprailiaco)  body.pliegueSuprailiaco  = parseFloat(pliegueSuprailiaco)
     await api.addSeguimiento(pacienteId, body)
     // Reset form
     setPeso(''); setCintura(''); setCadera(''); setBrazo(''); setMuslo('')
     setGrasa(''); setSistolica(''); setDiastolica(''); setGlucosa(''); setNotas('')
+    setPliegueTricep(''); setPliegueBiceps(''); setPliegueSubescapular(''); setPliegueSuprailiaco('')
     setSaving(false)
     reload()
   }
@@ -630,6 +640,33 @@ function SeguimientoTab({ pacienteId, alturaInicial }: { pacienteId: string; alt
               <label className="text-xs text-gray-500 mb-1 block">Notas</label>
               <input className="input text-sm" placeholder="Observaciones..."
                 value={notas} onChange={e => setNotas(e.target.value)} />
+            </div>
+            <div className="col-span-2 sm:col-span-4 pt-2 border-t border-gray-100">
+              <p className="text-xs font-semibold text-gray-600 mb-2">
+                Pliegues cutáneos ISAK (mm) — para % grasa por Durnin-Womersley
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Tríceps</label>
+                  <input type="number" step="0.1" className="input text-sm"
+                    value={pliegueTricep} onChange={e => setPliegueTricep(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Bíceps</label>
+                  <input type="number" step="0.1" className="input text-sm"
+                    value={pliegueBiceps} onChange={e => setPliegueBiceps(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Subescapular</label>
+                  <input type="number" step="0.1" className="input text-sm"
+                    value={pliegueSubescapular} onChange={e => setPliegueSubescapular(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Suprailiaco</label>
+                  <input type="number" step="0.1" className="input text-sm"
+                    value={pliegueSuprailiaco} onChange={e => setPliegueSuprailiaco(e.target.value)} />
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -717,6 +754,9 @@ function SeguimientoTab({ pacienteId, alturaInicial }: { pacienteId: string; alt
                       {s.brazoCm     && <span>Brazo {s.brazoCm} cm</span>}
                       {s.musloCm     && <span>Muslo {s.musloCm} cm</span>}
                       {s.grasaCorporal && <span>Grasa {s.grasaCorporal}%</span>}
+                      {s.grasaCorporalISAK != null && (
+                        <span className="text-rose-600 font-medium">Grasa ISAK {s.grasaCorporalISAK}%</span>
+                      )}
                       {s.tensionSistolica && (
                         <span>T/A {s.tensionSistolica}/{s.tensionDiastolica} mmHg</span>
                       )}

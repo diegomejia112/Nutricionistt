@@ -13,18 +13,21 @@ func (h *Handler) ListSeguimientos(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	pacienteID := chi.URLParam(r, "id")
 
-	var n int
-	h.db.QueryRowContext(r.Context(),
-		"SELECT COUNT(*) FROM pacientes WHERE id=? AND nutricionista_id=? AND activo=1",
-		pacienteID, userID).Scan(&n)
-	if n == 0 {
+	var sexo string
+	var edad int
+	err := h.db.QueryRowContext(r.Context(), `
+		SELECT sexo, CAST((julianday('now')-julianday(fecha_nacimiento))/365.25 AS INTEGER)
+		FROM pacientes WHERE id=? AND nutricionista_id=? AND activo=1`,
+		pacienteID, userID).Scan(&sexo, &edad)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "paciente no encontrado")
 		return
 	}
 
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT id, fecha, peso, cintura_cm, cadera_cm, brazo_cm, muslo_cm,
-		       grasa_corporal, tension_sistolica, tension_diastolica, glucosa, notas
+		       grasa_corporal, tension_sistolica, tension_diastolica, glucosa, notas,
+		       pliegue_tricep, pliegue_biceps, pliegue_subescapular, pliegue_suprailiaco
 		FROM seguimientos WHERE paciente_id=? ORDER BY fecha DESC, created_at DESC`,
 		pacienteID)
 	if err != nil {
@@ -34,18 +37,23 @@ func (h *Handler) ListSeguimientos(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type S struct {
-		ID                string   `json:"id"`
-		Fecha             string   `json:"fecha"`
-		Peso              *float64 `json:"peso"`
-		CinturaCm         *float64 `json:"cinturaCm"`
-		CaderaCm          *float64 `json:"caderaCm"`
-		BrazoCm           *float64 `json:"brazoCm"`
-		MusloCm           *float64 `json:"musloCm"`
-		GrasaCorporal     *float64 `json:"grasaCorporal"`
-		TensionSistolica  *int     `json:"tensionSistolica"`
-		TensionDiastolica *int     `json:"tensionDiastolica"`
-		Glucosa           *float64 `json:"glucosa"`
-		Notas             *string  `json:"notas"`
+		ID                  string   `json:"id"`
+		Fecha               string   `json:"fecha"`
+		Peso                *float64 `json:"peso"`
+		CinturaCm           *float64 `json:"cinturaCm"`
+		CaderaCm            *float64 `json:"caderaCm"`
+		BrazoCm             *float64 `json:"brazoCm"`
+		MusloCm             *float64 `json:"musloCm"`
+		GrasaCorporal       *float64 `json:"grasaCorporal"`
+		TensionSistolica    *int     `json:"tensionSistolica"`
+		TensionDiastolica   *int     `json:"tensionDiastolica"`
+		Glucosa             *float64 `json:"glucosa"`
+		Notas               *string  `json:"notas"`
+		PliegueTricep       *float64 `json:"pliegueTricep"`
+		PliegueBiceps       *float64 `json:"pliegueBiceps"`
+		PliegueSubescapular *float64 `json:"pliegueSubescapular"`
+		PliegueSuprailiaco  *float64 `json:"pliegueSuprailiaco"`
+		GrasaCorporalISAK   *float64 `json:"grasaCorporalISAK"`
 	}
 
 	var list []S
@@ -53,7 +61,11 @@ func (h *Handler) ListSeguimientos(w http.ResponseWriter, r *http.Request) {
 		var s S
 		rows.Scan(&s.ID, &s.Fecha, &s.Peso, &s.CinturaCm, &s.CaderaCm,
 			&s.BrazoCm, &s.MusloCm, &s.GrasaCorporal,
-			&s.TensionSistolica, &s.TensionDiastolica, &s.Glucosa, &s.Notas)
+			&s.TensionSistolica, &s.TensionDiastolica, &s.Glucosa, &s.Notas,
+			&s.PliegueTricep, &s.PliegueBiceps, &s.PliegueSubescapular, &s.PliegueSuprailiaco)
+		if pct, ok := CalcularGrasaISAK(s.PliegueTricep, s.PliegueBiceps, s.PliegueSubescapular, s.PliegueSuprailiaco, edad, sexo); ok {
+			s.GrasaCorporalISAK = &pct
+		}
 		list = append(list, s)
 	}
 	if list == nil {
@@ -76,17 +88,21 @@ func (h *Handler) AddSeguimiento(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Fecha             string   `json:"fecha"`
-		Peso              *float64 `json:"peso"`
-		CinturaCm         *float64 `json:"cinturaCm"`
-		CaderaCm          *float64 `json:"caderaCm"`
-		BrazoCm           *float64 `json:"brazoCm"`
-		MusloCm           *float64 `json:"musloCm"`
-		GrasaCorporal     *float64 `json:"grasaCorporal"`
-		TensionSistolica  *int     `json:"tensionSistolica"`
-		TensionDiastolica *int     `json:"tensionDiastolica"`
-		Glucosa           *float64 `json:"glucosa"`
-		Notas             *string  `json:"notas"`
+		Fecha               string   `json:"fecha"`
+		Peso                *float64 `json:"peso"`
+		CinturaCm           *float64 `json:"cinturaCm"`
+		CaderaCm            *float64 `json:"caderaCm"`
+		BrazoCm             *float64 `json:"brazoCm"`
+		MusloCm             *float64 `json:"musloCm"`
+		GrasaCorporal       *float64 `json:"grasaCorporal"`
+		TensionSistolica    *int     `json:"tensionSistolica"`
+		TensionDiastolica   *int     `json:"tensionDiastolica"`
+		Glucosa             *float64 `json:"glucosa"`
+		Notas               *string  `json:"notas"`
+		PliegueTricep       *float64 `json:"pliegueTricep"`
+		PliegueBiceps       *float64 `json:"pliegueBiceps"`
+		PliegueSubescapular *float64 `json:"pliegueSubescapular"`
+		PliegueSuprailiaco  *float64 `json:"pliegueSuprailiaco"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "json invalido")
@@ -100,11 +116,13 @@ func (h *Handler) AddSeguimiento(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.db.ExecContext(r.Context(), `
 		INSERT INTO seguimientos
 			(id,paciente_id,fecha,peso,cintura_cm,cadera_cm,brazo_cm,muslo_cm,
-			 grasa_corporal,tension_sistolica,tension_diastolica,glucosa,notas)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			 grasa_corporal,tension_sistolica,tension_diastolica,glucosa,notas,
+			 pliegue_tricep,pliegue_biceps,pliegue_subescapular,pliegue_suprailiaco)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, pacienteID, body.Fecha, body.Peso, body.CinturaCm, body.CaderaCm,
 		body.BrazoCm, body.MusloCm, body.GrasaCorporal,
-		body.TensionSistolica, body.TensionDiastolica, body.Glucosa, body.Notas); err != nil {
+		body.TensionSistolica, body.TensionDiastolica, body.Glucosa, body.Notas,
+		body.PliegueTricep, body.PliegueBiceps, body.PliegueSubescapular, body.PliegueSuprailiaco); err != nil {
 		writeError(w, http.StatusInternalServerError, "error guardando seguimiento")
 		return
 	}

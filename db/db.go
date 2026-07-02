@@ -296,6 +296,11 @@ func Init(path string) (*sql.DB, error) {
 		"ALTER TABLE platillos ADD COLUMN alto_proteina INTEGER DEFAULT 0",
 		"ALTER TABLE platillos ADD COLUMN bajo_grasa INTEGER DEFAULT 0",
 		"ALTER TABLE platillos ADD COLUMN vegetariano INTEGER DEFAULT 0",
+		// Pliegues cutáneos ISAK (mm) para calcular % grasa (Durnin-Womersley + Siri)
+		"ALTER TABLE seguimientos ADD COLUMN pliegue_tricep REAL",
+		"ALTER TABLE seguimientos ADD COLUMN pliegue_biceps REAL",
+		"ALTER TABLE seguimientos ADD COLUMN pliegue_subescapular REAL",
+		"ALTER TABLE seguimientos ADD COLUMN pliegue_suprailiaco REAL",
 	}
 	for _, m := range migrations {
 		db.Exec(m)
