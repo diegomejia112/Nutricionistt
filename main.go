@@ -107,6 +107,7 @@ func main() {
 			r.Delete("/planes/{id}/alimentos/{alimentoId}", h.RemoveAlimentoPlan)
 
 			r.Get("/alimentos", h.ListAlimentos)
+			r.Patch("/alimentos/{id}/activo", h.UpdateAlimentoActivo)
 			r.Get("/platillos", h.ListPlatillos)
 			r.Get("/platillos/compatibles/{pacienteId}", h.ListPlatillosCompatibles)
 			r.Get("/platillos/{id}/variantes", h.ListVariantes)

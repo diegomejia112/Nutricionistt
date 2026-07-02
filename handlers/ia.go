@@ -428,6 +428,13 @@ REGLAS ESTRICTAS:
 9. Si hay enfermedad renal: limitar proteina, potasio y fosforo
 10. Adaptar porciones al IMC y nivel de actividad del paciente
 11. Incluir macronutrientes para CADA alimento (calorias, proteinas, carbohidratos, grasas)
+12. BALANCE OBLIGATORIO: cada dia debe incluir alimentos de TODOS los grupos del
+    Sistema Mexicano de Alimentos Equivalentes (SMAE) — cereales, verduras,
+    frutas, alimentos de origen animal (AOA: carnes/huevo/pescado), leguminosas,
+    lacteos, aceites/grasas. NUNCA generes un dia sin fruta o sin verdura, salvo
+    que una restriccion medica del paciente lo prohiba explicitamente (ej.
+    restriccion de potasio en enfermedad renal puede limitar ciertas frutas,
+    pero no eliminar el grupo completo sin justificacion clinica)
 
 Responde SOLO JSON valido con esta estructura exacta:
 {

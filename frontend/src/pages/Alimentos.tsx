@@ -41,7 +41,7 @@ export default function Alimentos() {
   const load = (query: string, cat: string, c: string[], t: Tab, attr: string) => {
     setLoading(true)
     const fn = t === 'alimentos'
-      ? api.getAlimentos(query, cat)
+      ? api.getAlimentos(query, cat, true, 2000)
       : api.getPlatillos({ q: query, categoria: cat, casos: c })
     fn.then(d => {
       const filtered = attr && t === 'platillos'
@@ -83,6 +83,13 @@ export default function Alimentos() {
     setAtributo('')
     setItems([])
     setExpanded(null)
+  }
+
+  async function toggleActivo(id: string, activo: boolean) {
+    setItems(prev => prev.map(a => a.id === id ? { ...a, activo } : a))
+    await api.setAlimentoActivo(id, activo).catch(() => {
+      setItems(prev => prev.map(a => a.id === id ? { ...a, activo: !activo } : a))
+    })
   }
 
   async function toggleExpand(id: string) {
@@ -170,9 +177,15 @@ export default function Alimentos() {
       ) : tab === 'alimentos' ? (
         <div className="grid grid-cols-1 gap-2">
           {items.map(a => (
-            <div key={a.id} className="card px-4 py-3 flex items-center gap-4">
+            <div key={a.id} className={`card px-4 py-3 flex items-center gap-4 ${a.activo ? '' : 'opacity-50'}`}>
+              <button
+                onClick={() => toggleActivo(a.id, !a.activo)}
+                title={a.activo ? 'Desactivar (no aparecerá al armar planes)' : 'Activar'}
+                className={`shrink-0 w-9 h-5 rounded-full transition-colors relative ${a.activo ? 'bg-rose-500' : 'bg-gray-300'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${a.activo ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </button>
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-800 truncate">{a.nombre}</p>
+                <p className={`font-medium text-gray-800 truncate ${a.activo ? '' : 'line-through'}`}>{a.nombre}</p>
                 {a.categoria && <span className="badge-gray text-xs mt-0.5">{a.categoria}</span>}
               </div>
               <div className="flex gap-4 text-sm text-gray-500 flex-shrink-0 text-right">

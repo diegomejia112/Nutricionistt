@@ -131,8 +131,10 @@ export const api = {
     request('DELETE', `/pacientes/${pacienteId}/condiciones/${casoId}`),
 
   // Alimentos y Platillos
-  getAlimentos: (q = '', categoria = '') =>
-    request<any[]>('GET', `/alimentos?q=${encodeURIComponent(q)}&categoria=${encodeURIComponent(categoria)}`),
+  getAlimentos: (q = '', categoria = '', incluirInactivos = false, limit?: number) =>
+    request<any[]>('GET', `/alimentos?q=${encodeURIComponent(q)}&categoria=${encodeURIComponent(categoria)}${incluirInactivos ? '&incluirInactivos=1' : ''}${limit ? `&limit=${limit}` : ''}`),
+  setAlimentoActivo: (id: string, activo: boolean) =>
+    request<{ ok: boolean }>('PATCH', `/alimentos/${id}/activo`, { activo }),
   getPlatillos: (params?: { q?: string; categoria?: string; region?: string; casos?: string[] }) => {
     const p = new URLSearchParams()
     if (params?.q) p.set('q', params.q)

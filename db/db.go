@@ -301,6 +301,14 @@ func Init(path string) (*sql.DB, error) {
 		db.Exec(m)
 	}
 
+	// Catálogo de alimentos: permite ocultar ingredientes que no aplican en el
+	// contexto del nutriólogo (ej. tofu) sin borrarlos del catálogo. Se separa
+	// del loop de arriba porque necesitamos saber si es la PRIMERA vez que se
+	// agrega la columna (err == nil) para decidir el estado inicial de "activo"
+	// sin pisar cambios que el nutriólogo ya haya hecho en arranques previos.
+	_, activoColErr := db.Exec("ALTER TABLE alimentos ADD COLUMN activo INTEGER DEFAULT 1")
+	primeraVezActivo := activoColErr == nil
+
 	if err := SeedData(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to seed data: %w", err)
@@ -308,6 +316,14 @@ func Init(path string) (*sql.DB, error) {
 
 	// Always runs — adds new SMAE foods to existing databases via INSERT OR IGNORE
 	SeedAlimentosSMAE(db)
+
+	// Solo la primera vez que existe la columna "activo": desactiva tofu por
+	// defecto (poco común en la práctica clínica de CDMX). El nutriólogo puede
+	// reactivarlo desde /alimentos; en arranques siguientes no se vuelve a
+	// tocar para no pisar esa decisión.
+	if primeraVezActivo {
+		db.Exec("UPDATE alimentos SET activo=0 WHERE nombre LIKE '%tofu%'")
+	}
 
 	// Always runs — adds 100+ healthy platillos via INSERT OR IGNORE
 	SeedPlatillosSaludables(db)

@@ -38,7 +38,7 @@ export const SMAE_META: Record<SmaeKey, {
 }
 
 // Maps alimentos.categoria → SMAE group
-const CAT_MAP: Record<string, SmaeKey> = {
+export const CAT_MAP: Record<string, SmaeKey> = {
   Verduras:    'Verduras',
   Frutas:      'Frutas',
   Cereales:    'Cereales',
