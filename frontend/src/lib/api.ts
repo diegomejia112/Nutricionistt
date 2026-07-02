@@ -120,24 +120,34 @@ export const api = {
   deleteRestriccion: (pacienteId: string, restriccionId: string) =>
     request('DELETE', `/pacientes/${pacienteId}/restricciones/${restriccionId}`),
 
+  // Catálogo de condiciones clínicas y asignación por paciente
+  getCasos: () =>
+    request<{ id: string; slug: string; nombre: string }[]>('GET', '/casos'),
+  getCondicionesPaciente: (pacienteId: string) =>
+    request<{ id: string; slug: string; nombre: string }[]>('GET', `/pacientes/${pacienteId}/condiciones`),
+  addCondicionPaciente: (pacienteId: string, casoId: string) =>
+    request<{ ok: boolean }>('POST', `/pacientes/${pacienteId}/condiciones`, { casoId }),
+  deleteCondicionPaciente: (pacienteId: string, casoId: string) =>
+    request('DELETE', `/pacientes/${pacienteId}/condiciones/${casoId}`),
+
   // Alimentos y Platillos
   getAlimentos: (q = '', categoria = '') =>
     request<any[]>('GET', `/alimentos?q=${encodeURIComponent(q)}&categoria=${encodeURIComponent(categoria)}`),
-  getPlatillos: (params?: { q?: string; categoria?: string; region?: string; caso?: string }) => {
+  getPlatillos: (params?: { q?: string; categoria?: string; region?: string; casos?: string[] }) => {
     const p = new URLSearchParams()
     if (params?.q) p.set('q', params.q)
     if (params?.categoria) p.set('categoria', params.categoria)
     if (params?.region) p.set('region', params.region)
-    if (params?.caso) p.set('caso', params.caso)
+    if (params?.casos && params.casos.length) p.set('casos', params.casos.join(','))
     return request<any[]>('GET', `/platillos?${p.toString()}`)
   },
   getVariantes: (platilloId: string) =>
     request<any[]>('GET', `/platillos/${platilloId}/variantes`),
-  getPlatillosCompatibles: (pacienteId: string, params?: { q?: string; categoria?: string; caso?: string }) => {
+  getPlatillosCompatibles: (pacienteId: string, params?: { q?: string; categoria?: string; casos?: string[] }) => {
     const p = new URLSearchParams()
     if (params?.q) p.set('q', params.q)
     if (params?.categoria) p.set('categoria', params.categoria)
-    if (params?.caso) p.set('caso', params.caso)
+    if (params?.casos && params.casos.length) p.set('casos', params.casos.join(','))
     return request<any[]>('GET', `/platillos/compatibles/${pacienteId}?${p.toString()}`)
   },
 

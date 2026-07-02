@@ -1,19 +1,15 @@
 import { useEffect, useState, useRef } from 'react'
-import { Search, Apple } from 'lucide-react'
+import { Search, Apple, ChevronDown } from 'lucide-react'
 import { api } from '../lib/api'
 import DishImage from '../components/ui/DishImage'
 
 const CATEGORIAS_ALIM = ['', 'Frutas', 'Verduras', 'Lacteos', 'Carnes', 'Cereales', 'Leguminosas', 'Aceites', 'Azucares', 'Bebidas']
 const CATEGORIAS_PLAT = ['', 'Desayuno', 'Comida', 'Cena', 'Colacion', 'Postre', 'Bebida']
-const CASOS = [
-  { val: '', label: 'Todos los casos' },
-  { val: 'diabetes', label: 'Diabetes' },
-  { val: 'hipertension', label: 'Hipertensión' },
-  { val: 'sobrepeso', label: 'Sobrepeso / Obesidad' },
-  { val: 'alto_proteina', label: 'Alto en proteína' },
-  { val: 'bajo_grasa', label: 'Bajo en grasa' },
-  { val: 'vegetariano', label: 'Vegetariano' },
-]
+const ATRIBUTO_KEY_MAP: Record<string, string> = {
+  alto_proteina: 'altoProteina',
+  bajo_grasa: 'bajoGrasa',
+  vegetariano: 'vegetariano',
+}
 
 type Tab = 'alimentos' | 'platillos'
 
@@ -30,44 +26,61 @@ export default function Alimentos() {
   const [tab, setTab] = useState<Tab>('alimentos')
   const [q, setQ] = useState('')
   const [categoria, setCategoria] = useState('')
-  const [caso, setCaso] = useState('')
+  const [casos, setCasos] = useState<string[]>([])
+  const [casosCatalogo, setCasosCatalogo] = useState<{ id: string; slug: string; nombre: string }[]>([])
+  const [showCasosDropdown, setShowCasosDropdown] = useState(false)
+  const [atributo, setAtributo] = useState('')
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [variantes, setVariantes] = useState<Record<string, any[]>>({})
   const debounce = useRef<ReturnType<typeof setTimeout>>()
 
-  const load = (query: string, cat: string, c: string, t: Tab) => {
+  useEffect(() => { api.getCasos().then(setCasosCatalogo).catch(() => {}) }, [])
+
+  const load = (query: string, cat: string, c: string[], t: Tab, attr: string) => {
     setLoading(true)
     const fn = t === 'alimentos'
       ? api.getAlimentos(query, cat)
-      : api.getPlatillos({ q: query, categoria: cat, caso: c })
-    fn.then(d => { setItems(d); setLoading(false) }).catch(() => setLoading(false))
+      : api.getPlatillos({ q: query, categoria: cat, casos: c })
+    fn.then(d => {
+      const filtered = attr && t === 'platillos'
+        ? d.filter((p: any) => p[ATRIBUTO_KEY_MAP[attr]])
+        : d
+      setItems(filtered)
+      setLoading(false)
+    }).catch(() => setLoading(false))
   }
 
-  useEffect(() => { load('', '', '', tab) }, [tab])
+  useEffect(() => { load('', '', [], tab, '') }, [tab])
 
   function handleSearch(val: string) {
     setQ(val)
     clearTimeout(debounce.current)
-    debounce.current = setTimeout(() => load(val, categoria, caso, tab), 300)
+    debounce.current = setTimeout(() => load(val, categoria, casos, tab, atributo), 300)
   }
 
   function handleCat(val: string) {
     setCategoria(val)
-    load(q, val, caso, tab)
+    load(q, val, casos, tab, atributo)
   }
 
-  function handleCaso(val: string) {
-    setCaso(val)
-    load(q, categoria, val, tab)
+  function handleCasos(seleccionados: string[]) {
+    setCasos(seleccionados)
+    load(q, categoria, seleccionados, tab, atributo)
+  }
+
+  function handleAtributo(val: string) {
+    setAtributo(val)
+    load(q, categoria, casos, tab, val)
   }
 
   function changeTab(t: Tab) {
     setTab(t)
     setQ('')
     setCategoria('')
-    setCaso('')
+    setCasos([])
+    setAtributo('')
     setItems([])
     setExpanded(null)
   }
@@ -110,10 +123,37 @@ export default function Alimentos() {
           ))}
         </select>
         {tab === 'platillos' && (
-          <select className="input w-52" value={caso} onChange={e => handleCaso(e.target.value)}>
-            {CASOS.map(c => (
-              <option key={c.val} value={c.val}>{c.label}</option>
-            ))}
+          <div className="relative">
+            <button type="button" onClick={() => setShowCasosDropdown(v => !v)}
+              className="input w-52 text-left flex items-center justify-between text-sm">
+              <span>{casos.length === 0 ? 'Todas las condiciones' : `Condiciones (${casos.length})`}</span>
+              <ChevronDown className="w-4 h-4 text-gray-400" />
+            </button>
+            {showCasosDropdown && (
+              <div className="absolute z-10 mt-1 w-64 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
+                {casosCatalogo.map(c => (
+                  <label key={c.id} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm">
+                    <input type="checkbox" checked={casos.includes(c.slug)}
+                      onChange={() => {
+                        const next = casos.includes(c.slug)
+                          ? casos.filter(s => s !== c.slug)
+                          : [...casos, c.slug]
+                        handleCasos(next)
+                      }}
+                      className="rounded border-gray-300 text-rose-500 focus:ring-rose-400" />
+                    {c.nombre}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {tab === 'platillos' && (
+          <select className="input w-44" value={atributo} onChange={e => handleAtributo(e.target.value)}>
+            <option value="">Atributo nutricional</option>
+            <option value="alto_proteina">Alto en proteína</option>
+            <option value="bajo_grasa">Bajo en grasa</option>
+            <option value="vegetariano">Vegetariano</option>
           </select>
         )}
       </div>

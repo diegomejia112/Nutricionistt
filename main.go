@@ -116,6 +116,11 @@ func main() {
 			r.Post("/pacientes/{id}/restricciones", h.AddRestriccionPaciente)
 			r.Delete("/pacientes/{id}/restricciones/{restriccionId}", h.DeleteRestriccionPaciente)
 
+			r.Get("/casos", h.ListCasos)
+			r.Get("/pacientes/{id}/condiciones", h.GetCondicionesPaciente)
+			r.Post("/pacientes/{id}/condiciones", h.AddCondicionPaciente)
+			r.Delete("/pacientes/{id}/condiciones/{casoId}", h.DeleteCondicionPaciente)
+
 			r.Get("/pacientes/{id}/seguimiento", h.ListSeguimientos)
 			r.Post("/pacientes/{id}/seguimiento", h.AddSeguimiento)
 			r.Delete("/pacientes/{id}/seguimiento/{sid}", h.DeleteSeguimiento)

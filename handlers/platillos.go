@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"nutricionist/auth"
@@ -53,29 +54,43 @@ func scanPlatillos(rows interface {
 	return lista
 }
 
-func casoFilter(caso string) string {
-	switch caso {
-	case "diabetes":
-		return " AND apto_diabetes=1"
-	case "hipertension":
-		return " AND apto_hipertension=1"
-	case "sobrepeso":
-		return " AND apto_sobrepeso=1"
-	case "alto_proteina":
-		return " AND alto_proteina=1"
-	case "bajo_grasa":
-		return " AND bajo_grasa=1"
-	case "vegetariano":
-		return " AND vegetariano=1"
+// casosFilterAND genera una cláusula WHERE que exige que el platillo tenga
+// TODOS los slugs de casos dados (coma-separados). prefix es la columna id
+// ya calificada según el alias de la query que la use (ej. "id" o "p.id").
+func casosFilterAND(prefix, casosCSV string) (whereClause string, args []any) {
+	if casosCSV == "" {
+		return "", nil
 	}
-	return ""
+	var slugs []string
+	for _, s := range strings.Split(casosCSV, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			slugs = append(slugs, s)
+		}
+	}
+	if len(slugs) == 0 {
+		return "", nil
+	}
+	placeholders := make([]string, len(slugs))
+	for i, slug := range slugs {
+		placeholders[i] = "?"
+		args = append(args, slug)
+	}
+	args = append(args, len(slugs))
+	whereClause = " AND " + prefix + ` IN (
+		SELECT platillo_id FROM platillo_casos pc
+		JOIN casos c ON c.id = pc.caso_id
+		WHERE c.slug IN (` + strings.Join(placeholders, ",") + `)
+		GROUP BY platillo_id
+		HAVING COUNT(DISTINCT c.slug) = ?
+	)`
+	return whereClause, args
 }
 
 func (h *Handler) ListPlatillos(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	categoria := r.URL.Query().Get("categoria")
 	region := r.URL.Query().Get("region")
-	caso := r.URL.Query().Get("caso")
+	casosCSV := r.URL.Query().Get("casos")
 
 	query := platilloSelect + " WHERE 1=1"
 	args := []any{}
@@ -92,7 +107,11 @@ func (h *Handler) ListPlatillos(w http.ResponseWriter, r *http.Request) {
 		query += " AND region=?"
 		args = append(args, region)
 	}
-	query += casoFilter(caso) + " ORDER BY nombre LIMIT 100"
+	if where, extraArgs := casosFilterAND("id", casosCSV); where != "" {
+		query += where
+		args = append(args, extraArgs...)
+	}
+	query += " ORDER BY nombre LIMIT 100"
 
 	rows, err := h.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
@@ -246,7 +265,7 @@ func (h *Handler) ListPlatillosCompatibles(w http.ResponseWriter, r *http.Reques
 
 	q := r.URL.Query().Get("q")
 	categoria := r.URL.Query().Get("categoria")
-	caso := r.URL.Query().Get("caso")
+	casosCSV := r.URL.Query().Get("casos")
 
 	query := `SELECT DISTINCT p.id,p.nombre,p.categoria,p.region,p.porcion_desc,
 		COALESCE(p.porcion_g,0),COALESCE(p.calorias,0),COALESCE(p.proteinas,0),
@@ -257,8 +276,17 @@ func (h *Handler) ListPlatillosCompatibles(w http.ResponseWriter, r *http.Reques
 		SELECT DISTINCT pi2.platillo_id FROM platillo_ingredientes pi2
 		WHERE pi2.grupo IN (SELECT pr.ingrediente FROM paciente_restricciones pr WHERE pr.paciente_id=?)
 		   OR pi2.ingrediente IN (SELECT pr.ingrediente FROM paciente_restricciones pr WHERE pr.paciente_id=?)
+	)
+	AND (
+		NOT EXISTS (SELECT 1 FROM paciente_casos WHERE paciente_id=?)
+		OR p.id IN (
+			SELECT platillo_id FROM platillo_casos
+			WHERE caso_id IN (SELECT caso_id FROM paciente_casos WHERE paciente_id=?)
+			GROUP BY platillo_id
+			HAVING COUNT(DISTINCT caso_id) = (SELECT COUNT(*) FROM paciente_casos WHERE paciente_id=?)
+		)
 	)`
-	args := []any{pacienteID, pacienteID}
+	args := []any{pacienteID, pacienteID, pacienteID, pacienteID, pacienteID}
 
 	if q != "" {
 		query += " AND p.nombre LIKE ?"
@@ -268,8 +296,9 @@ func (h *Handler) ListPlatillosCompatibles(w http.ResponseWriter, r *http.Reques
 		query += " AND p.categoria=?"
 		args = append(args, categoria)
 	}
-	if caso != "" {
-		query += " AND p." + casoColumn(caso) + "=1"
+	if where, extraArgs := casosFilterAND("p.id", casosCSV); where != "" {
+		query += where
+		args = append(args, extraArgs...)
 	}
 	query += " ORDER BY p.nombre LIMIT 100"
 
@@ -282,20 +311,3 @@ func (h *Handler) ListPlatillosCompatibles(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, scanPlatillos(rows))
 }
 
-func casoColumn(caso string) string {
-	switch caso {
-	case "diabetes":
-		return "apto_diabetes"
-	case "hipertension":
-		return "apto_hipertension"
-	case "sobrepeso":
-		return "apto_sobrepeso"
-	case "alto_proteina":
-		return "alto_proteina"
-	case "bajo_grasa":
-		return "bajo_grasa"
-	case "vegetariano":
-		return "vegetariano"
-	}
-	return "apto_diabetes"
-}

@@ -87,7 +87,7 @@ export default function ExpedientePaciente() {
   const navigate = useNavigate()
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'info' | 'consultas' | 'planes' | 'seguimiento'>('info')
+  const [tab, setTab] = useState<'info' | 'consultas' | 'planes' | 'seguimiento' | 'condiciones'>('info')
   const [editando, setEditando] = useState(false)
   const [form, setForm] = useState<any>({})
   const [saving, setSaving] = useState(false)
@@ -211,7 +211,7 @@ export default function ExpedientePaciente() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-5 border-b border-gray-100 overflow-x-auto">
-        {(['info', 'consultas', 'planes', 'seguimiento'] as const).map(t => (
+        {(['info', 'consultas', 'planes', 'seguimiento', 'condiciones'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
               tab === t ? 'border-rose-500 text-rose-600' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -219,7 +219,8 @@ export default function ExpedientePaciente() {
             {t === 'info' ? 'Expediente'
               : t === 'consultas' ? `Consultas (${data?.consultas?.length ?? 0})`
               : t === 'planes' ? `Planes (${data?.planes?.length ?? 0})`
-              : 'Seguimiento'}
+              : t === 'seguimiento' ? 'Seguimiento'
+              : 'Condiciones'}
           </button>
         ))}
       </div>
@@ -441,6 +442,64 @@ export default function ExpedientePaciente() {
       {tab === 'seguimiento' && id && (
         <SeguimientoTab pacienteId={id} alturaInicial={data?.paciente?.altura} />
       )}
+
+      {tab === 'condiciones' && id && (
+        <CondicionesTab pacienteId={id} />
+      )}
+    </div>
+  )
+}
+
+// ── Condiciones clínicas (comorbilidades) ─────────────────────────
+function CondicionesTab({ pacienteId }: { pacienteId: string }) {
+  const [catalogo, setCatalogo] = useState<{ id: string; slug: string; nombre: string }[]>([])
+  const [asignadas, setAsignadas] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(true)
+
+  const reload = () => {
+    Promise.all([api.getCasos(), api.getCondicionesPaciente(pacienteId)])
+      .then(([cat, conds]) => {
+        setCatalogo(cat)
+        setAsignadas(new Set(conds.map(c => c.id)))
+        setLoading(false)
+      })
+      .catch(() => setLoading(false))
+  }
+
+  useEffect(() => { reload() }, [pacienteId])
+
+  async function toggle(casoId: string, asignada: boolean) {
+    if (asignada) {
+      await api.deleteCondicionPaciente(pacienteId, casoId)
+    } else {
+      await api.addCondicionPaciente(pacienteId, casoId)
+    }
+    reload()
+  }
+
+  if (loading) return <div className="card p-5"><p className="text-sm text-gray-400">Cargando condiciones...</p></div>
+
+  return (
+    <div className="card p-5 space-y-3">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Condiciones clínicas</h2>
+      <p className="text-xs text-gray-400">
+        Al asignar condiciones, los platillos sugeridos en el plan se filtran para cumplir TODAS a la vez.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {catalogo.map(c => {
+          const asignada = asignadas.has(c.id)
+          return (
+            <button key={c.id} onClick={() => toggle(c.id, asignada)}
+              className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                asignada
+                  ? 'bg-rose-50 text-rose-700 border-rose-300'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-rose-200'
+              }`}>
+              {c.nombre}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }

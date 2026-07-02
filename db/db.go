@@ -226,6 +226,29 @@ func Init(path string) (*sql.DB, error) {
 		FOREIGN KEY (paciente_id) REFERENCES pacientes(id)
 	);
 
+	-- Catálogo normalizado de condiciones clínicas (reemplaza las columnas
+	-- apto_diabetes/apto_hipertension/apto_sobrepeso para poder escalar a más
+	-- condiciones sin migraciones de schema)
+	CREATE TABLE IF NOT EXISTS casos (
+		id TEXT PRIMARY KEY,
+		slug TEXT UNIQUE NOT NULL,
+		nombre TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS platillo_casos (
+		platillo_id TEXT NOT NULL REFERENCES platillos(id),
+		caso_id TEXT NOT NULL REFERENCES casos(id),
+		PRIMARY KEY (platillo_id, caso_id)
+	);
+
+	-- Condiciones diagnosticadas de un paciente (comorbilidades)
+	CREATE TABLE IF NOT EXISTS paciente_casos (
+		paciente_id TEXT NOT NULL REFERENCES pacientes(id),
+		caso_id TEXT NOT NULL REFERENCES casos(id),
+		created_at DATETIME NOT NULL,
+		PRIMARY KEY (paciente_id, caso_id)
+	);
+
 	-- Seguimiento/evolución del paciente
 	CREATE TABLE IF NOT EXISTS seguimientos (
 		id TEXT PRIMARY KEY,
@@ -288,6 +311,12 @@ func Init(path string) (*sql.DB, error) {
 
 	// Always runs — adds 100+ healthy platillos via INSERT OR IGNORE
 	SeedPlatillosSaludables(db)
+
+	// Always runs — catálogo de condiciones clínicas + re-etiquetado heurístico
+	if err := SeedCasos(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to seed casos: %w", err)
+	}
 
 	return db, nil
 }
