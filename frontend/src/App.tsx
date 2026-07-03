@@ -5,6 +5,7 @@ import { api } from './lib/api'
 import Sidebar from './components/layout/Sidebar'
 
 import Login from './pages/Login'
+import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import Pacientes from './pages/Pacientes'
 import NuevoPaciente from './pages/NuevoPaciente'
@@ -63,6 +64,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/registro" element={<Register />} />
           <Route path="/*" element={
             <RequireAuth>
               <AppLayout>
