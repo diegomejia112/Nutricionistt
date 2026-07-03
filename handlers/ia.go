@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"nutricionist/auth"
@@ -83,67 +85,48 @@ func (h *Handler) GenerarPlanIA(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	prompt := buildPrompt(pac, ingredientesRestringidos, body.PreferenciaRegion, body.RestriccionesExtra, body.CaloriasObj)
-
-	reqBody, _ := json.Marshal(map[string]any{
-		"model": "deepseek-chat",
-		"messages": []map[string]string{
-			{"role": "user", "content": prompt},
-		},
-		"max_tokens":      8192,
-		"response_format": map[string]string{"type": "json_object"},
-	})
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, deepseekURL, bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "error conectando con DeepSeek")
-		return
+	// Generar el plan DIA POR DIA (7 llamadas cortas en paralelo) en vez de una
+	// sola llamada para toda la semana: una respuesta de 7 dias completos con
+	// macros por alimento fácilmente pasa de los 8192 tokens máximos de
+	// DeepSeek y llega truncada (JSON incompleto). Un solo día es una
+	// fracción del tamaño y nunca se acerca a ese límite.
+	type diaResultado struct {
+		tiempos       []any
+		totalCalorias float64
+		err           error
 	}
-	defer resp.Body.Close()
-
-	rawData, _ := io.ReadAll(resp.Body)
-
-	var dsResp struct {
-		Choices []struct {
-			Message struct{ Content string `json:"content"` } `json:"message"`
-		} `json:"choices"`
-		Error *struct{ Message string `json:"message"` } `json:"error"`
+	resultados := make([]diaResultado, 7)
+	var wg sync.WaitGroup
+	for i := 0; i < 7; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			dia := idx + 1
+			tiempos, total, err := h.generarDiaIA(r.Context(), apiKey, pac,
+				ingredientesRestringidos, body.PreferenciaRegion, body.RestriccionesExtra,
+				body.CaloriasObj, dia, diasNombre[dia])
+			resultados[idx] = diaResultado{tiempos, total, err}
+		}(i)
 	}
-	if err := json.Unmarshal(rawData, &dsResp); err != nil || len(dsResp.Choices) == 0 {
-		if dsResp.Error != nil {
-			writeError(w, http.StatusBadGateway, dsResp.Error.Message)
+	wg.Wait()
+
+	var diasFallidos []string
+	sumaCalorias := 0.0
+	for i, res := range resultados {
+		if res.err != nil {
+			diasFallidos = append(diasFallidos, diasNombre[i+1])
 		} else {
-			writeError(w, http.StatusBadGateway, "respuesta invalida de DeepSeek")
+			sumaCalorias += res.totalCalorias
 		}
-		return
 	}
-
-	content := dsResp.Choices[0].Message.Content
-	content = cleanJSONResponse(content)
-	var planJSON map[string]any
-	if err := json.Unmarshal([]byte(content), &planJSON); err != nil {
-		// Log first 500 chars to help debugging
-		preview := content
-		if len(preview) > 500 {
-			preview = preview[:500]
-		}
-		fmt.Printf("[IA] JSON parse error: %v\nContent preview: %s\n", err, preview)
-		writeError(w, http.StatusInternalServerError, "plan generado no es JSON valido: "+err.Error())
+	if len(diasFallidos) > 0 {
+		writeError(w, http.StatusBadGateway,
+			"no se pudo generar el plan para: "+strings.Join(diasFallidos, ", ")+" (intenta de nuevo)")
 		return
 	}
 
 	// Save the plan to DB
 	planID := db.GenerateID()
-	calStr := ""
-	if cal, ok := planJSON["caloriasTotal"].(float64); ok {
-		calStr = fmt.Sprintf("%.0f", cal)
-	}
-	_ = calStr
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -152,12 +135,16 @@ func (h *Handler) GenerarPlanIA(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	descripcion, _ := planJSON["descripcion"].(string)
+	descripcion := fmt.Sprintf("Plan semanal para %s %s, generado por IA", pac.Nombre, pac.Apellidos)
+	if pac.Objetivo.Valid && pac.Objetivo.String != "" {
+		descripcion += " — " + pac.Objetivo.String
+	}
 	var calTarget *float64
 	if body.CaloriasObj != nil {
 		calTarget = body.CaloriasObj
-	} else if cal, ok := planJSON["caloriasTotal"].(float64); ok {
-		calTarget = &cal
+	} else if sumaCalorias > 0 {
+		promedio := sumaCalorias / 7
+		calTarget = &promedio
 	}
 
 	if _, err := tx.ExecContext(r.Context(), `
@@ -165,13 +152,12 @@ func (h *Handler) GenerarPlanIA(w http.ResponseWriter, r *http.Request) {
 			calorias_obj,generado_ia,prompt_ia,activo)
 		VALUES (?,?,?,?,?,?,1,?,1)`,
 		planID, body.PacienteID, body.NombrePlan, descripcion,
-		time.Now().Format("2006-01-02"), calTarget, prompt); err != nil {
+		time.Now().Format("2006-01-02"), calTarget, "generado dia por dia"); err != nil {
 		writeError(w, http.StatusInternalServerError, "error guardando plan")
 		return
 	}
 
 	// Guardar dias, tiempos y alimentos del plan generado por IA
-	diasIA, _ := planJSON["dias"].([]any)
 	for dia := 1; dia <= 7; dia++ {
 		diaID := db.GenerateID()
 		if _, err := tx.ExecContext(r.Context(),
@@ -181,13 +167,7 @@ func (h *Handler) GenerarPlanIA(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Buscar el dia correspondiente en el JSON de IA
-		var tiemposIA []any
-		if diasIA != nil && dia-1 < len(diasIA) {
-			if diaJSON, ok := diasIA[dia-1].(map[string]any); ok {
-				tiemposIA, _ = diaJSON["tiempos"].([]any)
-			}
-		}
+		tiemposIA := resultados[dia-1].tiempos
 
 		for _, t := range tiemposBase {
 			tiempoID := db.GenerateID()
@@ -250,7 +230,6 @@ func (h *Handler) GenerarPlanIA(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"planId": planID,
-		"plan":   planJSON,
 	})
 }
 
@@ -336,15 +315,15 @@ type pacientePrompt struct {
 	Notas           sql.NullString
 }
 
-func buildPrompt(pac pacientePrompt, ingredientesRestringidos []string, region, restriccionesExtra string, caloriasObj *float64) string {
+func buildPromptDia(pac pacientePrompt, ingredientesRestringidos []string, region, restriccionesExtra string, caloriasObjDia *float64, diaNum int, diaNombre string) string {
 	sexoStr := "Femenino"
 	if pac.Sexo.String == "M" {
 		sexoStr = "Masculino"
 	}
 
 	calStr := "calcular segun IMC y objetivo"
-	if caloriasObj != nil {
-		calStr = fmt.Sprintf("%.0f kcal/dia", *caloriasObj)
+	if caloriasObjDia != nil {
+		calStr = fmt.Sprintf("%.0f kcal para este dia", *caloriasObjDia)
 	}
 
 	pesoStr := "no especificado"
@@ -370,11 +349,12 @@ func buildPrompt(pac pacientePrompt, ingredientesRestringidos []string, region, 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf(
 		"Eres un nutriologo experto en el Sistema Mexicano de Alimentos Equivalentes (SMAE) y gastronomia mexicana.\n\n"+
-			"Genera un plan de alimentacion semanal completo (7 dias) para el siguiente paciente:\n"+
+			"Genera SOLO el dia %d de 7 (%s) de un plan de alimentacion semanal para el "+
+			"siguiente paciente. NO generes los otros dias, solo este uno:\n"+
 			"- Nombre: %s %s\n"+
 			"- Sexo: %s, Edad: %s\n"+
 			"- Peso: %s, Altura: %s",
-		pac.Nombre, pac.Apellidos, sexoStr, edadStr, pesoStr, altStr))
+		diaNum, diaNombre, pac.Nombre, pac.Apellidos, sexoStr, edadStr, pesoStr, altStr))
 	if imcStr != "" {
 		sb.WriteString(", IMC: " + imcStr)
 	}
@@ -417,7 +397,7 @@ func buildPrompt(pac pacientePrompt, ingredientesRestringidos []string, region, 
 	sb.WriteString(`
 
 REGLAS ESTRICTAS:
-1. Usar platillos mexicanos reales y variados cada dia (tacos, enchiladas, pozole, chilaquiles, sopas, guisados, tortas, quesadillas, caldos)
+1. Usar platillos mexicanos reales (tacos, enchiladas, pozole, chilaquiles, sopas, guisados, tortas, quesadillas, caldos) — distintos a los de otros dias de la semana si es posible
 2. Exactamente 5 tiempos: Desayuno, Colacion AM, Comida, Colacion PM, Cena
 3. Respetar ABSOLUTAMENTE todas las alergias, intolerancias y restricciones indicadas
 4. Usar medidas caseras mexicanas (tazas, cucharadas, piezas, porciones, gramos)
@@ -428,39 +408,32 @@ REGLAS ESTRICTAS:
 9. Si hay enfermedad renal: limitar proteina, potasio y fosforo
 10. Adaptar porciones al IMC y nivel de actividad del paciente
 11. Incluir macronutrientes para CADA alimento (calorias, proteinas, carbohidratos, grasas)
-12. BALANCE OBLIGATORIO: cada dia debe incluir alimentos de TODOS los grupos del
+12. BALANCE OBLIGATORIO: este dia debe incluir alimentos de TODOS los grupos del
     Sistema Mexicano de Alimentos Equivalentes (SMAE) — cereales, verduras,
     frutas, alimentos de origen animal (AOA: carnes/huevo/pescado), leguminosas,
     lacteos, aceites/grasas. NUNCA generes un dia sin fruta o sin verdura, salvo
     que una restriccion medica del paciente lo prohiba explicitamente (ej.
     restriccion de potasio en enfermedad renal puede limitar ciertas frutas,
     pero no eliminar el grupo completo sin justificacion clinica)
+13. Responde UNICAMENTE los datos de este UN dia — no incluyas los otros 6 dias
+    de la semana bajo ninguna circunstancia
 
-Responde SOLO JSON valido con esta estructura exacta:
+Responde SOLO JSON valido con esta estructura exacta (un solo dia):
 {
-  "descripcion": "Plan semanal para [nombre], enfocado en [objetivo]",
-  "caloriasTotal": 2000,
-  "distribucionMacros": {"proteinas": 25, "carbos": 50, "grasas": 25},
-  "dias": [
+  "totalCalorias": 2000,
+  "tiempos": [
     {
-      "diaSemana": 1,
-      "nombreDia": "Lunes",
-      "totalCalorias": 2000,
-      "tiempos": [
+      "nombre": "Desayuno",
+      "totalCalorias": 400,
+      "alimentos": [
         {
-          "nombre": "Desayuno",
-          "totalCalorias": 400,
-          "alimentos": [
-            {
-              "nombre": "Avena con leche descremada y platano",
-              "cantidad": 1,
-              "unidad": "taza",
-              "calorias": 280,
-              "proteinas": 8,
-              "carbohidratos": 52,
-              "grasas": 5
-            }
-          ]
+          "nombre": "Avena con leche descremada y platano",
+          "cantidad": 1,
+          "unidad": "taza",
+          "calorias": 280,
+          "proteinas": 8,
+          "carbohidratos": 52,
+          "grasas": 5
         }
       ]
     }
@@ -468,4 +441,91 @@ Responde SOLO JSON valido con esta estructura exacta:
 }`)
 
 	return sb.String()
+}
+
+// generarDiaIA genera UN día del plan semanal con DeepSeek. Reintenta una vez
+// si la respuesta falla o llega con JSON incompleto (truncado).
+func (h *Handler) generarDiaIA(ctx context.Context, apiKey string, pac pacientePrompt,
+	ingredientesRestringidos []string, region, restriccionesExtra string,
+	caloriasObjSemana *float64, diaNum int, diaNombre string) ([]any, float64, error) {
+
+	var caloriasObjDia *float64
+	if caloriasObjSemana != nil {
+		v := *caloriasObjSemana / 7
+		caloriasObjDia = &v
+	}
+	prompt := buildPromptDia(pac, ingredientesRestringidos, region, restriccionesExtra, caloriasObjDia, diaNum, diaNombre)
+
+	var lastErr error
+	for intento := 0; intento < 2; intento++ {
+		tiempos, total, err := llamarDeepSeekDia(ctx, apiKey, prompt)
+		if err == nil {
+			return tiempos, total, nil
+		}
+		lastErr = err
+		fmt.Printf("[IA] dia %d (%s) intento %d fallo: %v\n", diaNum, diaNombre, intento+1, err)
+	}
+	return nil, 0, lastErr
+}
+
+func llamarDeepSeekDia(ctx context.Context, apiKey, prompt string) ([]any, float64, error) {
+	reqBody, _ := json.Marshal(map[string]any{
+		"model": "deepseek-chat",
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+		"max_tokens":      8192,
+		"response_format": map[string]string{"type": "json_object"},
+	})
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, deepseekURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error conectando con DeepSeek: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rawData, _ := io.ReadAll(resp.Body)
+
+	var dsResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rawData, &dsResp); err != nil || len(dsResp.Choices) == 0 {
+		if dsResp.Error != nil {
+			return nil, 0, fmt.Errorf("DeepSeek: %s", dsResp.Error.Message)
+		}
+		return nil, 0, fmt.Errorf("respuesta invalida de DeepSeek")
+	}
+
+	content := cleanJSONResponse(dsResp.Choices[0].Message.Content)
+	var diaJSON map[string]any
+	if err := json.Unmarshal([]byte(content), &diaJSON); err != nil {
+		preview := content
+		if len(preview) > 300 {
+			preview = preview[:300]
+		}
+		fmt.Printf("[IA] JSON parse error: %v\nContent preview: %s\n", err, preview)
+		return nil, 0, fmt.Errorf("JSON invalido: %w", err)
+	}
+
+	tiempos, _ := diaJSON["tiempos"].([]any)
+	if len(tiempos) == 0 {
+		return nil, 0, fmt.Errorf("respuesta sin tiempos de comida")
+	}
+	total, _ := diaJSON["totalCalorias"].(float64)
+	return tiempos, total, nil
 }
