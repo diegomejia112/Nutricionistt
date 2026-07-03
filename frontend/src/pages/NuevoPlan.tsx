@@ -1,7 +1,8 @@
 import { useState, FormEvent, useEffect } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Calculator } from 'lucide-react'
 import { api } from '../lib/api'
+import CalculadoraMifflin from '../components/ui/CalculadoraMifflin'
 
 export default function NuevoPlan() {
   const navigate = useNavigate()
@@ -20,9 +21,16 @@ export default function NuevoPlan() {
     grasasObj: '',
   })
 
+  const [pacienteDetalle, setPacienteDetalle] = useState<any>(null)
+
   useEffect(() => {
     api.getPacientes('', 100).then(setPacientes).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!form.pacienteId) { setPacienteDetalle(null); return }
+    api.getPaciente(form.pacienteId).then(d => setPacienteDetalle(d.paciente)).catch(() => setPacienteDetalle(null))
+  }, [form.pacienteId])
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })) }
 
@@ -92,6 +100,25 @@ export default function NuevoPlan() {
             <input type="date" className="input" value={form.fechaInicio} onChange={e => set('fechaInicio', e.target.value)} />
           </div>
         </div>
+
+        {form.pacienteId && (
+          <div className="card p-5 space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-2">
+              <Calculator className="w-4 h-4" /> Cálculo automático (Mifflin-St Jeor)
+            </h2>
+            {!pacienteDetalle ? (
+              <p className="text-sm text-gray-400">Cargando datos del paciente...</p>
+            ) : (
+              <CalculadoraMifflin paciente={pacienteDetalle} onAplicar={v => setForm(f => ({
+                ...f,
+                caloriasObj: String(v.caloriasObj),
+                proteinasObj: String(v.proteinas),
+                carbsObj: String(v.carbos),
+                grasasObj: String(v.grasas),
+              }))} />
+            )}
+          </div>
+        )}
 
         <div className="card p-5 space-y-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Objetivos nutricionales (opcional)</h2>

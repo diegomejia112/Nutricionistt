@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2, Edit2, Save, X, Cpu, TrendingDown, TrendingUp, Minus } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Edit2, Save, X, Cpu, TrendingDown, TrendingUp, Minus, Calculator } from 'lucide-react'
 import { api } from '../lib/api'
+import CalculadoraMifflin from '../components/ui/CalculadoraMifflin'
 
 const SUGERENCIAS_ENFERMEDADES = [
   'Diabetes tipo 2','Diabetes tipo 1','Hipertensión arterial','Obesidad','Sobrepeso',
@@ -276,6 +277,14 @@ export default function ExpedientePaciente() {
                 <StatBox label="IMC" value={imc ? `${imc} · ${imcLabel(parseFloat(imc))}` : '—'} highlight={imc ? imcColor(parseFloat(imc)) : ''} />
               </div>
             )}
+          </div>
+
+          {/* Cálculo automático (Mifflin-St Jeor) */}
+          <div className="card p-5 space-y-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-2">
+              <Calculator className="w-3.5 h-3.5" /> Cálculo automático (Mifflin-St Jeor)
+            </h2>
+            <CalculadoraMifflin paciente={p} />
           </div>
 
           {/* Condición clínica */}

@@ -2,6 +2,7 @@ import { useState, FormEvent, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Cpu, Loader, Key, Eye, EyeOff, CheckCircle, User } from 'lucide-react'
 import { api } from '../lib/api'
+import CalculadoraMifflin from '../components/ui/CalculadoraMifflin'
 
 export default function IA() {
   const navigate = useNavigate()
@@ -19,6 +20,7 @@ export default function IA() {
     pacienteId: searchParams.get('pacienteId') ?? '',
     nombrePlan: '',
     caloriasObj: '',
+    proteinasObj: '',
     restriccionesExtra: '',
     preferenciaRegion: '',
   })
@@ -35,6 +37,9 @@ export default function IA() {
   }, [form.pacienteId])
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })) }
+
+  const p = pacienteInfo?.paciente
+  const restricciones: any[] = pacienteInfo?.restricciones ?? []
 
   async function guardarKey(e: FormEvent) {
     e.preventDefault()
@@ -65,6 +70,7 @@ export default function IA() {
         pacienteId: form.pacienteId,
         nombrePlan: form.nombrePlan,
         caloriasObj: form.caloriasObj ? parseFloat(form.caloriasObj) : undefined,
+        proteinasObj: form.proteinasObj ? parseFloat(form.proteinasObj) : undefined,
         restriccionesExtra: form.restriccionesExtra,
         preferenciaRegion: form.preferenciaRegion,
       })
@@ -74,9 +80,6 @@ export default function IA() {
       setGenerating(false)
     }
   }
-
-  const p = pacienteInfo?.paciente
-  const restricciones: any[] = pacienteInfo?.restricciones ?? []
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -209,11 +212,23 @@ export default function IA() {
         {/* Parámetros adicionales */}
         <div className="card p-5 space-y-4">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ajustes adicionales (opcionales)</h2>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Calorías objetivo (kcal/día)</label>
-            <input type="number" className="input" placeholder="Se calcula automáticamente si no se especifica"
-              value={form.caloriasObj} onChange={e => set('caloriasObj', e.target.value)} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Calorías objetivo (kcal/día)</label>
+              <input type="number" className="input" placeholder="Automático"
+                value={form.caloriasObj} onChange={e => set('caloriasObj', e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Proteína objetivo (g/día)</label>
+              <input type="number" className="input" placeholder="Automático"
+                value={form.proteinasObj} onChange={e => set('proteinasObj', e.target.value)} />
+            </div>
           </div>
+
+          {p && (
+            <CalculadoraMifflin paciente={p} aplicarLabel="Usar estos valores"
+              onAplicar={v => setForm(f => ({ ...f, caloriasObj: String(v.caloriasObj), proteinasObj: String(v.proteinas) }))} />
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Preferencia regional</label>
             <select className="input" value={form.preferenciaRegion} onChange={e => set('preferenciaRegion', e.target.value)}>

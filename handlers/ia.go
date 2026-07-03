@@ -24,11 +24,12 @@ func (h *Handler) GenerarPlanIA(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 
 	var body struct {
-		PacienteID        string   `json:"pacienteId"`
-		NombrePlan        string   `json:"nombrePlan"`
-		CaloriasObj       *float64 `json:"caloriasObj"`
-		RestriccionesExtra string  `json:"restriccionesExtra"`
-		PreferenciaRegion  string  `json:"preferenciaRegion"`
+		PacienteID         string   `json:"pacienteId"`
+		NombrePlan         string   `json:"nombrePlan"`
+		CaloriasObj        *float64 `json:"caloriasObj"`
+		ProteinasObj       *float64 `json:"proteinasObj"`
+		RestriccionesExtra string   `json:"restriccionesExtra"`
+		PreferenciaRegion  string   `json:"preferenciaRegion"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "json invalido")
@@ -104,7 +105,7 @@ func (h *Handler) GenerarPlanIA(w http.ResponseWriter, r *http.Request) {
 			dia := idx + 1
 			tiempos, total, err := h.generarDiaIA(r.Context(), apiKey, pac,
 				ingredientesRestringidos, body.PreferenciaRegion, body.RestriccionesExtra,
-				body.CaloriasObj, dia, diasNombre[dia])
+				body.CaloriasObj, body.ProteinasObj, dia, diasNombre[dia])
 			resultados[idx] = diaResultado{tiempos, total, err}
 		}(i)
 	}
@@ -315,7 +316,7 @@ type pacientePrompt struct {
 	Notas           sql.NullString
 }
 
-func buildPromptDia(pac pacientePrompt, ingredientesRestringidos []string, region, restriccionesExtra string, caloriasObjDia *float64, diaNum int, diaNombre string) string {
+func buildPromptDia(pac pacientePrompt, ingredientesRestringidos []string, region, restriccionesExtra string, caloriasObjDia, proteinasObjDia *float64, diaNum int, diaNombre string) string {
 	sexoStr := "Femenino"
 	if pac.Sexo.String == "M" {
 		sexoStr = "Masculino"
@@ -324,6 +325,11 @@ func buildPromptDia(pac pacientePrompt, ingredientesRestringidos []string, regio
 	calStr := "calcular segun IMC y objetivo"
 	if caloriasObjDia != nil {
 		calStr = fmt.Sprintf("%.0f kcal para este dia", *caloriasObjDia)
+	}
+
+	proteinaStr := ""
+	if proteinasObjDia != nil {
+		proteinaStr = fmt.Sprintf("\n- Proteina objetivo: %.0fg para este dia (ESTRICTO — suma la proteina de todos los alimentos del dia y que se acerque a este numero, no lo excedas por mucho)", *proteinasObjDia)
 	}
 
 	pesoStr := "no especificado"
@@ -359,6 +365,7 @@ func buildPromptDia(pac pacientePrompt, ingredientesRestringidos []string, regio
 		sb.WriteString(", IMC: " + imcStr)
 	}
 	sb.WriteString("\n- Calorias objetivo: " + calStr)
+	sb.WriteString(proteinaStr)
 
 	if pac.Objetivo.Valid && pac.Objetivo.String != "" {
 		sb.WriteString("\n- Objetivo clinico: " + pac.Objetivo.String)
@@ -447,14 +454,11 @@ Responde SOLO JSON valido con esta estructura exacta (un solo dia):
 // si la respuesta falla o llega con JSON incompleto (truncado).
 func (h *Handler) generarDiaIA(ctx context.Context, apiKey string, pac pacientePrompt,
 	ingredientesRestringidos []string, region, restriccionesExtra string,
-	caloriasObjSemana *float64, diaNum int, diaNombre string) ([]any, float64, error) {
+	caloriasObjDia, proteinasObjDia *float64, diaNum int, diaNombre string) ([]any, float64, error) {
 
-	var caloriasObjDia *float64
-	if caloriasObjSemana != nil {
-		v := *caloriasObjSemana / 7
-		caloriasObjDia = &v
-	}
-	prompt := buildPromptDia(pac, ingredientesRestringidos, region, restriccionesExtra, caloriasObjDia, diaNum, diaNombre)
+	// caloriasObjDia y proteinasObjDia YA son objetivos diarios (así se piden
+	// y etiquetan en toda la app — "kcal/día", "g/día"), NO se dividen entre 7.
+	prompt := buildPromptDia(pac, ingredientesRestringidos, region, restriccionesExtra, caloriasObjDia, proteinasObjDia, diaNum, diaNombre)
 
 	var lastErr error
 	for intento := 0; intento < 2; intento++ {

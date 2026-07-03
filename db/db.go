@@ -330,6 +330,13 @@ func Init(path string) (*sql.DB, error) {
 		db.Exec("UPDATE alimentos SET activo=0 WHERE nombre LIKE '%tofu%'")
 	}
 
+	// Always runs — catálogo real de 2159 alimentos SMAE (idempotente por
+	// nombre). Los poco comunes en México quedan inactivos por default.
+	if err := SeedSMAEAlimentos(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to seed smae alimentos: %w", err)
+	}
+
 	// Always runs — adds 100+ healthy platillos via INSERT OR IGNORE
 	SeedPlatillosSaludables(db)
 

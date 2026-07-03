@@ -75,16 +75,49 @@ function effectiveMacros(ap: any) {
   }
 }
 
-// Macro-based SMAE estimation for composite foods (platillos / IA)
+// Macro-based SMAE estimation (fallback cuando el nombre no da ninguna pista).
+// Sólo puede reconocer AOA/Aceites/Cereales — no distingue Verduras, Frutas,
+// Lácteos, Leguminosas ni Azúcares a partir de macros solos.
 function macroEstimate(pro: number, cho: number, fat: number): SmaeResult {
   const r = emptyResult()
-  // 1. Protein → AOA (7g pro = 1 equiv)
   r.AOA = Math.max(0, pro / 7)
-  // 2. Fat → Aceites after subtracting fat already accounted in AOA
   const fatRem = Math.max(0, fat - r.AOA * SMAE_META.AOA.fatEq)
   r.Aceites = fatRem / 5
-  // 3. Carbs → Cereales (15g = 1 equiv)
   r.Cereales = Math.max(0, cho) / 15
+  return r
+}
+
+// Palabras clave por categoría SMAE, para clasificar alimentos de texto libre
+// (generados por IA o "libre") que no tienen categoria de catálogo. Cubre
+// nombres de comida mexicana comunes.
+// Combina palabras clave manuales (comida mexicana común, para no perder
+// cobertura) con ~380 palabras reales extraídas de la tabla SMAE de 2159
+// alimentos de la práctica del nutriólogo (planilla "Nutriphasev"),
+// clasificadas por su GRUPO real, no adivinadas.
+const NOMBRE_KEYWORDS: { key: SmaeKey; pattern: RegExp }[] = [
+  { key: 'Frutas', pattern: /manzana|pl[aá]tano|papaya|mango|pera\b|uvas?\b|mel[oó]n|sand[ií]a|fresas?|naranja|mandarina|guayaba|pi[ñn]a\b|kiwi|durazno|ciruela|toronja|lim[oó]n\b|cocoy|higo|frutas?|chabacano|gajos|granada|guanabana|jinicuil|mamey|maracuya|nispero|orejones|tamarindo|tuna|zapote/i },
+  { key: 'Verduras', pattern: /lechuga|jitomate|tomate|pepino|zanahoria|nopal|espinaca|br[oó]coli|coliflor|calabacit|chayote|apio\b|champi[ñn]|hongo|ejote|\bcol\b|verdura|ensalada|rajas|jicama|jícama|acelga|alcachofa|betabel|chicoria|colorin|creson|guaje|pepinillos|pimiento|setas|verdolaga/i },
+  { key: 'Cereales', pattern: /tortilla|arroz|\bpan\b|avena|pasta|tostada|elote|ma[ií]z|cereal|amaranto|atole|bolillo|camote|centeno|espagueti|fideo|galletas?|granola|hojuelas|integral|palomitas|papas?|sopa|tamales?|trigo/i },
+  { key: 'Leguminosas', pattern: /frijol(es)?|lenteja|garbanzo|haba\b|soya|alubia|alverjon/i },
+  { key: 'AOA', pattern: /pollo|\bres\b|carne|pescado|at[uú]n|huevo|camar[oó]n|cerdo|jam[oó]n|pavo|mariscos?|arrachera|bacalao|bistec|borrego|cabra|calamar|cangrejo|carnero|cecina|chuleta|conejo|cordero|costilla|filete|gallina|iguana|jaiba|langosta|lomo|milanesa|mojarra|muslo|pata\b|pechuga|puerco|pulpo|robalo|salchicha|salmon|salmón|sardinas|ternera|trucha|venado/i },
+  { key: 'Lacteos', pattern: /\bleche\b|yogur|queso(?! panela)|descremada|evaporada|helado|jocoque|malteada/i },
+  { key: 'Aceites', pattern: /aceite|aguacate|nueces?|almendras?|cacahuate|pistach|aceituna|avellana|cacao|chia|chorizo|manteca|margarina|oliva|pepitas|tocino/i },
+  { key: 'Azucares', pattern: /az[uú]car|\bmiel\b|piloncillo|mermelada|gelatina|caramelo|chicle|condensada|flan|jarabe|mousse|paleta|refresco/i },
+]
+
+// Estima equivalentes a partir del NOMBRE del alimento (más confiable que solo
+// macros, ya reconoce Verduras/Frutas/Lácteos/Leguminosas/Azúcares). Si el
+// nombre no matchea ninguna categoría, usa macroEstimate como respaldo.
+function nombreEstimate(nombre: string, kcal: number, pro: number, cho: number, fat: number): SmaeResult {
+  const matches = NOMBRE_KEYWORDS.filter(k => k.pattern.test(nombre)).map(k => k.key)
+  if (matches.length === 0) {
+    return macroEstimate(pro, cho, fat)
+  }
+  const r = emptyResult()
+  const kcalPorMatch = kcal / matches.length
+  for (const key of matches) {
+    r[key] += kcalPorMatch / SMAE_META[key].kcalEq
+  }
   return r
 }
 
@@ -104,8 +137,9 @@ export function calcEquivAlimentos(alimentos: any[]): SmaeResult {
       }
     }
 
-    // Fallback: estimate from macros
-    const est = macroEstimate(m.pro, m.cho, m.fat)
+    // Sin categoria de catálogo (alimento libre, IA, o platillo): clasificar
+    // por el nombre del alimento, con respaldo por macros si no matchea nada
+    const est = nombreEstimate(ap.nombre ?? '', m.kcal, m.pro, m.cho, m.fat)
     for (const k of SMAE_ORDER) {
       total[k] += est[k]
     }
